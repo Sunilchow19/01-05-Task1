@@ -1,0 +1,77 @@
+div{
+    padding: 5px;
+    border: 2px;
+display: inline-block;
+vertical-align: auto;
+width: px;
+vertical-align: top;
+}
+#sss{
+    display: inline-block;
+    margin-left: 75px;
+    font-weight: bolder;
+    font-size: 40px;
+}
+#ss{
+    display: inline-block;
+    margin-left: 270px;
+    font-weight: bolder;
+    font-size: 40px;
+}
+#s{
+    display: inline-block;
+    margin-left: 280px;
+    font-weight: bolder;
+    font-size: 40px;
+}
+/* 
+  <div style="display: block;text-align: center;"></div>
+     <p class="same p1">&#x2630;</p>
+    <p class="same p2">My Food</p>
+    <p class="same p3">Mail</p> 
+    
+.same
+{
+    display: inline-block;
+    font-weight: bold;
+    font-size: 30px;
+}
+.p1
+{
+    margin-left:100px;
+}
+.p2{
+  margin-left: 550px;
+}
+.p3{
+  margin-left: 500px;
+}
+*/
+#sh{
+    
+    margin-left: 200px;
+}
+a{
+    color: black;
+    text-align: center;
+}
+#s{
+    margin-left: 333px;
+}
+#al{
+    background-color: black;color: whitesmoke;
+}
+button{
+    background-color: grey;color: whitesmoke;
+}
+#all{
+margin-left: 100px;
+}
+#hi{
+background-color: black;
+color: whitesmoke;
+padding: 7px;
+}
+#hii{
+    padding: 7px;
+}
