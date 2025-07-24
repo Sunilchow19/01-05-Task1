@@ -95,7 +95,7 @@ class FirebaseRepositorys {
 
             val documentRef = firestore.collection("service_providers").document(phone)
             
-            // First, get existing data to avoid overriding
+            // First, get existing data to avoid overriding other specializations
             val existingDoc = documentRef.get().await()
             val existingSpecializations = if (existingDoc.exists()) {
                 val existingData = existingDoc.data ?: emptyMap()
@@ -196,7 +196,7 @@ class FirebaseRepositorys {
         return null
     }
 
-    // New method to get all specializations for a user
+    // Method to get all specializations for a user
     suspend fun getAllSpecializationsForUser(): Map<String, Map<String, Any>>? {
         val user = FirebaseAuth.getInstance().currentUser
         val phone = user?.phoneNumber?.replace("+91", "") ?: return null
@@ -212,7 +212,7 @@ class FirebaseRepositorys {
         return null
     }
 
-    // New method to delete a specific specialization
+    // Method to delete a specific specialization (only used when needed)
     suspend fun deleteSpecialization(serviceName: String): Boolean {
         return try {
             val user = FirebaseAuth.getInstance().currentUser
@@ -234,82 +234,7 @@ class FirebaseRepositorys {
         }
     }
 
-    // New method to update a specific specialization without affecting others
-    suspend fun updateSpecificSpecialization(
-        specializationName: String,
-        charges: Map<String, String>,
-        subSpecializations: List<String>,
-        onComplete: (Boolean, String?) -> Unit
-    ) {
-        try {
-            val user = FirebaseAuth.getInstance().currentUser
-            val phone = user?.phoneNumber?.replace("+91", "") ?: run {
-                onComplete(false, "User not authenticated")
-                return
-            }
-
-            val docRef = firestore.collection("service_providers").document(phone)
-            
-            val specializationData = mapOf(
-                "specialization" to specializationName,
-                "charges" to charges,
-                "subSpecializations" to subSpecializations,
-                "updatedAt" to com.google.firebase.Timestamp.now()
-            )
-
-            // Update only the specific specialization
-            val updates = mapOf(
-                "specializations.$specializationName" to specializationData
-            )
-            
-            docRef.update(updates).await()
-            Log.d("FirebaseRepository", "Successfully updated specialization: $specializationName")
-            onComplete(true, null)
-            
-        } catch (e: Exception) {
-            Log.e("FirebaseRepository", "Error updating specialization: $specializationName", e)
-            onComplete(false, "Failed to update specialization: ${e.message}")
-        }
-    }
-
-    // New method to save single specialization (useful for individual updates)
-    suspend fun saveSingleSpecialization(
-        specialization: com.example.clanhub.serviProviderRegisScrn2.screen.fields.SpecializationWithCharge,
-        onComplete: (Boolean, String?) -> Unit
-    ) {
-        try {
-            val user = FirebaseAuth.getInstance().currentUser
-            val phone = user?.phoneNumber?.replace("+91", "") ?: run {
-                onComplete(false, "User not authenticated")
-                return
-            }
-
-            val docRef = firestore.collection("service_providers").document(phone)
-            
-            val chargesMap = specialization.charges?.toMap() ?: emptyMap()
-            val specializationData = mapOf(
-                "specialization" to specialization.specialization,
-                "charges" to chargesMap,
-                "subSpecializations" to specialization.subSpecializations,
-                "updatedAt" to com.google.firebase.Timestamp.now()
-            )
-
-            // Update only this specific specialization
-            val updates = mapOf(
-                "specializations.${specialization.specialization}" to specializationData
-            )
-            
-            docRef.update(updates).await()
-            Log.d("FirebaseRepository", "Successfully saved single specialization: ${specialization.specialization}")
-            onComplete(true, null)
-            
-        } catch (e: Exception) {
-            Log.e("FirebaseRepository", "Error saving single specialization: ${specialization.specialization}", e)
-            onComplete(false, "Failed to save specialization: ${e.message}")
-        }
-    }
-
-    // New method to check if a specialization exists
+    // Method to check if a specialization exists
     suspend fun specializationExists(serviceName: String): Boolean {
         return try {
             val user = FirebaseAuth.getInstance().currentUser
@@ -330,7 +255,7 @@ class FirebaseRepositorys {
         }
     }
 
-    // New method to get user's basic profile info (without specializations)
+    // Method to get user's basic profile info (without specializations)
     suspend fun getUserBasicInfo(): Map<String, Any>? {
         val user = FirebaseAuth.getInstance().currentUser
         val phone = user?.phoneNumber?.replace("+91", "") ?: return null

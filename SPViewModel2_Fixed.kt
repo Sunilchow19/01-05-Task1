@@ -116,7 +116,7 @@ class SPViewModel2(
 
     val showSpecializationError = mutableStateOf(false)
 
-    // ===== Update Functions =====
+    // ===== Update Functions (LOCAL ONLY - NO FIREBASE UPDATES) =====
 
     fun updateSelectedOptions(options: List<String>) {
         _selectedOptions.value = options
@@ -132,7 +132,6 @@ class SPViewModel2(
         _uiState.value = _uiState.value.copy(selectedworkstyle = _selectedWorkstyle.value)
     }
 
-    // Update validateWorkstyle function:
     fun validateWorkstyle(): Boolean {
         isWorkstyleValid = _selectedWorkstyle.value.isNotEmpty()
         workstyleErrorMessage = if (isWorkstyleValid) "" else "Please select at least one work style"
@@ -167,20 +166,8 @@ class SPViewModel2(
             _experiencePerSpecialization.putIfAbsent(category, "")
             updateSpecializationState()
             
-            // Save single specialization to Firebase immediately
-            viewModelScope.launch {
-                val specialization = SpecializationWithCharge(
-                    specialization = category,
-                    charges = _chargesPerSpecialization[category],
-                    subSpecializations = _selectedSubSpecializations[category] ?: emptyList()
-                )
-                
-                firebaseRepository.saveSingleSpecialization(specialization) { success, error ->
-                    if (!success) {
-                        Log.e("SPViewModel2", "Failed to save new specialization $category: $error")
-                    }
-                }
-            }
+            // NO FIREBASE UPDATE - Only local state update
+            Log.d("SPViewModel2", "Added specialization locally: $category")
         }
     }
 
@@ -191,37 +178,24 @@ class SPViewModel2(
         _selectedSubSpecializations.remove(category)
         updateSpecializationState()
         
-        // Also remove from Firebase
-        viewModelScope.launch {
-            val success = firebaseRepository.deleteSpecialization(category)
-            if (!success) {
-                Log.e("SPViewModel2", "Failed to delete specialization: $category")
-            }
-        }
+        // NO FIREBASE UPDATE - Only local state update
+        Log.d("SPViewModel2", "Removed specialization locally: $category")
     }
 
     fun updateCharges(category: String, charges: Charges) {
         _chargesPerSpecialization[category] = charges
         updateSpecializationState()
         
-        // Update specific specialization in Firebase in real-time
-        viewModelScope.launch {
-            val subSpecs = _selectedSubSpecializations[category] ?: emptyList()
-            firebaseRepository.updateSpecificSpecialization(
-                specializationName = category,
-                charges = charges.toMap(),
-                subSpecializations = subSpecs
-            ) { success, error ->
-                if (!success) {
-                    Log.e("SPViewModel2", "Failed to update charges for $category: $error")
-                }
-            }
-        }
+        // NO FIREBASE UPDATE - Only local state update
+        Log.d("SPViewModel2", "Updated charges locally for: $category")
     }
 
     fun updateExperience(category: String, experience: String) {
         _experiencePerSpecialization[category] = experience
         updateSpecializationState()
+        
+        // NO FIREBASE UPDATE - Only local state update
+        Log.d("SPViewModel2", "Updated experience locally for: $category")
     }
 
     fun addSubSpecialization(category: String, subSpecialization: String) {
@@ -231,19 +205,8 @@ class SPViewModel2(
             _selectedSubSpecializations[category] = current
             updateSpecializationState()
             
-            // Update specific specialization in Firebase in real-time
-            viewModelScope.launch {
-                val charges = _chargesPerSpecialization[category]?.toMap() ?: emptyMap()
-                firebaseRepository.updateSpecificSpecialization(
-                    specializationName = category,
-                    charges = charges,
-                    subSpecializations = current
-                ) { success, error ->
-                    if (!success) {
-                        Log.e("SPViewModel2", "Failed to update subspecializations for $category: $error")
-                    }
-                }
-            }
+            // NO FIREBASE UPDATE - Only local state update
+            Log.d("SPViewModel2", "Added sub-specialization locally: $subSpecialization to $category")
         }
     }
 
@@ -268,6 +231,9 @@ class SPViewModel2(
         _uiState.value = _uiState.value.copy(specializationsWithCharges = newSpecializations)
 
         updateSpecializationState()
+        
+        // NO FIREBASE UPDATE - Only local state update
+        Log.d("SPViewModel2", "Updated specializations locally: ${newSpecializations.map { it.specialization }}")
     }
 
     fun removeSubSpecialization(category: String, subSpecialization: String) {
@@ -276,19 +242,8 @@ class SPViewModel2(
         _selectedSubSpecializations[category] = current
         updateSpecializationState()
         
-        // Update specific specialization in Firebase in real-time
-        viewModelScope.launch {
-            val charges = _chargesPerSpecialization[category]?.toMap() ?: emptyMap()
-            firebaseRepository.updateSpecificSpecialization(
-                specializationName = category,
-                charges = charges,
-                subSpecializations = current
-            ) { success, error ->
-                if (!success) {
-                    Log.e("SPViewModel2", "Failed to update subspecializations for $category: $error")
-                }
-            }
-        }
+        // NO FIREBASE UPDATE - Only local state update
+        Log.d("SPViewModel2", "Removed sub-specialization locally: $subSpecialization from $category")
     }
 
     private fun updateSpecializationState() {
@@ -401,11 +356,12 @@ class SPViewModel2(
         if (newValue.length <= 2 && newValue.all { it.isDigit() }) {
             experienceInput = newValue
         }
+        // NO FIREBASE UPDATE - Only local state update
     }
 
-    // ===== FIREBASE LOADING FUNCTIONS =====
+    // ===== FIREBASE LOADING FUNCTIONS (READ ONLY) =====
 
-    // New function to load all specializations for the user
+    // Function to load all specializations for the user
     fun loadAllUserSpecializations() = viewModelScope.launch {
         try {
             Log.d("LOAD_DEBUG", "Loading all user specializations")
@@ -627,7 +583,7 @@ class SPViewModel2(
         }
     }
 
-    // Check if a specialization already exists
+    // Check if a specialization already exists (READ ONLY)
     fun checkSpecializationExists(serviceName: String, onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
             val exists = firebaseRepository.specializationExists(serviceName)
@@ -635,7 +591,7 @@ class SPViewModel2(
         }
     }
 
-    // ===== SUBMISSION =====
+    // ===== SUBMISSION (ONLY FIREBASE WRITE OPERATION) =====
 
     fun onSubmitForm2() {
         _submitClicked.value = true
@@ -681,7 +637,9 @@ class SPViewModel2(
         _uiState.value = _uiState.value.copy(isLoading = true)
         val experience = experienceInput.ifBlank { "0" }
 
+        // THIS IS THE ONLY PLACE WHERE DATA IS SAVED TO FIREBASE
         viewModelScope.launch {
+            Log.d("ServiceProviderViewModel", "🔥 SAVING TO FIREBASE - Submit button clicked")
             firebaseRepository.saveServiceProviderData(
                 specializationsWithCharges = _specializationState.value,
                 selectedTimeSlots = _selectedTimeSlots.value,
@@ -695,10 +653,12 @@ class SPViewModel2(
                     isSubmittedSuccessfully.value = true
                     submissionSuccess.value = true
                     _uiState.value = _uiState.value.copy(errorMessage = null)
+                    Log.d("ServiceProviderViewModel", "✅ Successfully saved to Firebase")
                 } else {
                     errorMessage.value = message ?: "Failed to save data."
                     _uiState.value = _uiState.value.copy(errorMessage = message)
                     submissionSuccess.value = false
+                    Log.e("ServiceProviderViewModel", "❌ Failed to save to Firebase: $message")
                 }
             }
         }
@@ -829,6 +789,8 @@ class SPViewModel2(
         experienceInput = ""
         _specializationState.value = emptyList()
         _uiState.value = ServiceProviderUiState()
+        
+        Log.d("SPViewModel2", "All data reset - no Firebase operations")
     }
 
     class ExperienceViewModel : ViewModel() {
