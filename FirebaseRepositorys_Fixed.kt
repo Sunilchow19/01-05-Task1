@@ -94,28 +94,15 @@ class FirebaseRepositorys {
             Log.d("FirebaseRepository", "Saving data for phone number: $phone")
 
             val documentRef = firestore.collection("service_providers").document(phone)
-            
-            // First, get existing data to avoid overriding other specializations
-            val existingDoc = documentRef.get().await()
-            val existingSpecializations = if (existingDoc.exists()) {
-                val existingData = existingDoc.data ?: emptyMap()
-                existingData["specializations"] as? Map<String, Any> ?: emptyMap()
-            } else {
-                emptyMap()
-            }
 
-            // 🟢 Prepare specializations data as a map with specialization name as key
-            val specializationsMap = existingSpecializations.toMutableMap()
-            
-            specializationsWithCharges.forEach { specialization ->
+            // 🟢 Prepare specializations data as a single consolidated structure
+            val specializationsData = specializationsWithCharges.map { specialization ->
                 val chargesMap = specialization.charges?.toMap() ?: emptyMap()
-                val subSpecializations = specialization.subSpecializations
-
-                // Use specialization name as key to prevent overriding
-                specializationsMap[specialization.specialization] = mapOf(
+                
+                mapOf(
                     "specialization" to specialization.specialization,
                     "charges" to chargesMap,
-                    "subSpecializations" to subSpecializations,
+                    "subSpecializations" to specialization.subSpecializations,
                     "updatedAt" to com.google.firebase.Timestamp.now()
                 )
             }
@@ -125,9 +112,9 @@ class FirebaseRepositorys {
                 selectedOptions.contains(key) && !selectedTimeSlots[key].isNullOrEmpty()
             }
 
-            // 🟢 Construct final Firestore data
+            // 🟢 Construct final Firestore data - SINGLE DOCUMENT STRUCTURE
             val serviceProviderData = hashMapOf(
-                "specializations" to specializationsMap, // Changed from array to map
+                "specializationsWithCharges" to specializationsData, // Array of all specializations
                 "selectedTimeSlots" to filteredTimeSlots,
                 "selectedWorkStyle" to selectedworkstyle.filter { it.isNotBlank() },
                 "selectedOptions" to selectedOptions.filter { it.isNotBlank() },
@@ -136,11 +123,11 @@ class FirebaseRepositorys {
                 "experience" to (experience.ifBlank { "0" }),
             )
 
-            // Use merge to update existing fields or create new document
+            // Use set with merge to update the entire document
             documentRef.set(serviceProviderData, SetOptions.merge()).await()
 
             Log.d("FirebaseRepository", "Successfully saved service provider data with phone: $phone")
-            Log.d("FirebaseRepository", "Saved specializations: ${specializationsMap.keys}")
+            Log.d("FirebaseRepository", "Saved ${specializationsData.size} specializations together")
             onComplete(true, null)
 
         } catch (e: Exception) {
@@ -172,9 +159,11 @@ class FirebaseRepositorys {
         if (snapshot.exists()) {
             val data = snapshot.data ?: return null
 
-            // Get the specializations map instead of array
-            val allSpecializations = data["specializations"] as? Map<String, Any>
-            val specializationData = allSpecializations?.get(serviceName) as? Map<String, Any>
+            // Get the specializations array and find the specific one
+            val allSpecializations = data["specializationsWithCharges"] as? List<Map<String, Any>>
+            val specializationData = allSpecializations?.find { 
+                it["specialization"] == serviceName 
+            }
 
             if (specializationData != null) {
                 // Return combined data: specialization + document-level fields
@@ -184,7 +173,7 @@ class FirebaseRepositorys {
                     "charges" to (specializationData["charges"] ?: mapOf<String, String>()),
                     "subSpecializations" to (specializationData["subSpecializations"] ?: emptyList<String>()),
 
-                    // Document-level data that applies to all services
+                    // Document-level data that applies to all services (CONSISTENT TIME SLOTS)
                     "selectedWorkStyle" to (data["selectedWorkStyle"] ?: emptyList<String>()),
                     "selectedTimeSlots" to (data["selectedTimeSlots"] ?: mapOf<String, List<String>>()),
                     "selectedOptions" to (data["selectedOptions"] ?: emptyList<String>()),
@@ -197,7 +186,7 @@ class FirebaseRepositorys {
     }
 
     // Method to get all specializations for a user
-    suspend fun getAllSpecializationsForUser(): Map<String, Map<String, Any>>? {
+    suspend fun getAllSpecializationsForUser(): List<Map<String, Any>>? {
         val user = FirebaseAuth.getInstance().currentUser
         val phone = user?.phoneNumber?.replace("+91", "") ?: return null
 
@@ -206,7 +195,25 @@ class FirebaseRepositorys {
 
         if (snapshot.exists()) {
             val data = snapshot.data ?: return null
-            return data["specializations"] as? Map<String, Map<String, Any>>
+            
+            // Return the array of specializations
+            val specializations = data["specializationsWithCharges"] as? List<Map<String, Any>>
+            return specializations
+        }
+
+        return null
+    }
+
+    // Method to get complete user data (all specializations + common fields)
+    suspend fun getCompleteUserData(): Map<String, Any>? {
+        val user = FirebaseAuth.getInstance().currentUser
+        val phone = user?.phoneNumber?.replace("+91", "") ?: return null
+
+        val docRef = firestore.collection("service_providers").document(phone)
+        val snapshot = docRef.get().await()
+
+        if (snapshot.exists()) {
+            return snapshot.data
         }
 
         return null
@@ -219,15 +226,29 @@ class FirebaseRepositorys {
             val phone = user?.phoneNumber?.replace("+91", "") ?: return false
 
             val docRef = firestore.collection("service_providers").document(phone)
+            val snapshot = docRef.get().await()
             
-            // Use FieldValue.delete() to remove the specific specialization
-            val updates = mapOf(
-                "specializations.$serviceName" to FieldValue.delete()
-            )
-            
-            docRef.update(updates).await()
-            Log.d("FirebaseRepository", "Successfully deleted specialization: $serviceName")
-            true
+            if (snapshot.exists()) {
+                val data = snapshot.data ?: return false
+                val allSpecializations = data["specializationsWithCharges"] as? List<Map<String, Any>> ?: return false
+                
+                // Filter out the specialization to delete
+                val updatedSpecializations = allSpecializations.filter { 
+                    it["specialization"] != serviceName 
+                }
+                
+                // Update the document with the filtered list
+                val updates = mapOf(
+                    "specializationsWithCharges" to updatedSpecializations,
+                    "updatedAt" to com.google.firebase.Timestamp.now()
+                )
+                
+                docRef.update(updates).await()
+                Log.d("FirebaseRepository", "Successfully deleted specialization: $serviceName")
+                true
+            } else {
+                false
+            }
         } catch (e: Exception) {
             Log.e("FirebaseRepository", "Error deleting specialization: $serviceName", e)
             false
@@ -245,8 +266,8 @@ class FirebaseRepositorys {
 
             if (snapshot.exists()) {
                 val data = snapshot.data ?: return false
-                val allSpecializations = data["specializations"] as? Map<String, Any>
-                return allSpecializations?.containsKey(serviceName) == true
+                val allSpecializations = data["specializationsWithCharges"] as? List<Map<String, Any>>
+                return allSpecializations?.any { it["specialization"] == serviceName } == true
             }
             false
         } catch (e: Exception) {

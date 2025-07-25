@@ -361,24 +361,26 @@ class SPViewModel2(
 
     // ===== FIREBASE LOADING FUNCTIONS (READ ONLY) =====
 
-    // Function to load all specializations for the user
+    // Function to load all specializations for the user - FIXED FOR SINGLE DOCUMENT
     fun loadAllUserSpecializations() = viewModelScope.launch {
         try {
-            Log.d("LOAD_DEBUG", "Loading all user specializations")
+            Log.d("LOAD_DEBUG", "Loading all user specializations from single document")
             val allSpecializations = firebaseRepository.getAllSpecializationsForUser()
             
             if (allSpecializations != null) {
-                Log.d("LOAD_DEBUG", "Found specializations: ${allSpecializations.keys}")
+                Log.d("LOAD_DEBUG", "Found ${allSpecializations.size} specializations")
                 
                 // Clear existing data
                 _selectedSpecializations.clear()
                 _chargesPerSpecialization.clear()
                 _selectedSubSpecializations.clear()
                 
-                // Load each specialization
+                // Load each specialization from the array
                 val specializationsList = mutableListOf<SpecializationWithCharge>()
                 
-                allSpecializations.forEach { (name, data) ->
+                allSpecializations.forEach { data ->
+                    val name = data["specialization"] as? String ?: return@forEach
+                    
                     val chargesMap = data["charges"] as? Map<*, *>
                     val charges = Charges(
                         perHour = chargesMap?.get("perHour") as? String ?: "",
@@ -405,13 +407,117 @@ class SPViewModel2(
                 _specializationState.value = specializationsList
                 _uiState.value = _uiState.value.copy(specializationsWithCharges = specializationsList)
                 
-                Log.d("LOAD_DEBUG", "Loaded ${specializationsList.size} specializations")
+                Log.d("LOAD_DEBUG", "Loaded ${specializationsList.size} specializations successfully")
             } else {
                 Log.d("LOAD_DEBUG", "No specializations found for user")
             }
         } catch (e: Exception) {
             Log.e("LOAD_DEBUG", "Error loading all specializations", e)
             _uiState.value = _uiState.value.copy(errorMessage = "Failed to load specializations")
+        }
+    }
+
+    // Load complete user data including time slots - FIXED FOR SINGLE DOCUMENT
+    fun loadCompleteUserData() = viewModelScope.launch {
+        try {
+            Log.d("LOAD_DEBUG", "Loading complete user data from single document")
+            val completeData = firebaseRepository.getCompleteUserData()
+            
+            if (completeData != null) {
+                Log.d("LOAD_DEBUG", "Found complete user data: ${completeData.keys}")
+                
+                // Load workstyle data
+                val savedWorkstyle = completeData["selectedWorkStyle"] as? List<*>
+                if (savedWorkstyle != null) {
+                    val workstyleList = savedWorkstyle.mapNotNull { it as? String }
+                    Log.d("LOAD_DEBUG", "Loading workstyle: $workstyleList")
+                    _selectedWorkstyle.value = workstyleList
+                }
+
+                // Load time slots and options - THIS SHOULD BE CONSISTENT NOW
+                val savedTimeSlots = completeData["selectedTimeSlots"] as? Map<*, *>
+                if (savedTimeSlots != null) {
+                    val timeSlots = savedTimeSlots.mapKeys { it.key as String }
+                        .mapValues { (it.value as? List<*>)?.mapNotNull { slot -> slot as? String } ?: emptyList() }
+
+                    Log.d("LOAD_DEBUG", "Loading timeSlots: $timeSlots")
+                    _selectedTimeSlots.value = timeSlots
+
+                    // Update selected options based on time slots
+                    val activeOptions = timeSlots.filter { it.value.isNotEmpty() }.keys.toList()
+                    Log.d("LOAD_DEBUG", "Derived activeOptions: $activeOptions")
+                    _selectedOptions.value = activeOptions
+                }
+
+                // Load saved options separately if available
+                val savedOptions = completeData["selectedOptions"] as? List<*>
+                if (savedOptions != null) {
+                    val optionsList = savedOptions.mapNotNull { it as? String }
+                    Log.d("LOAD_DEBUG", "Loading savedOptions: $optionsList")
+                    _selectedOptions.value = optionsList
+                }
+
+                // Load experience
+                val savedExperience = completeData["experience"] as? String
+                if (savedExperience != null) {
+                    experienceInput = savedExperience
+                    Log.d("LOAD_DEBUG", "Loading experience: $savedExperience")
+                }
+
+                // Load all specializations
+                val allSpecializations = completeData["specializationsWithCharges"] as? List<Map<String, Any>>
+                if (allSpecializations != null) {
+                    // Clear existing data
+                    _selectedSpecializations.clear()
+                    _chargesPerSpecialization.clear()
+                    _selectedSubSpecializations.clear()
+                    
+                    val specializationsList = mutableListOf<SpecializationWithCharge>()
+                    
+                    allSpecializations.forEach { data ->
+                        val name = data["specialization"] as? String ?: return@forEach
+                        
+                        val chargesMap = data["charges"] as? Map<*, *>
+                        val charges = Charges(
+                            perHour = chargesMap?.get("perHour") as? String ?: "",
+                            perDay = chargesMap?.get("perDay") as? String ?: "",
+                            perWeek = chargesMap?.get("perWeek") as? String ?: "",
+                            perMonth = chargesMap?.get("perMonth") as? String ?: ""
+                        )
+                        
+                        val subSpecializations = (data["subSpecializations"] as? List<*>)
+                            ?.mapNotNull { it as? String } ?: emptyList()
+                        
+                        val specializationData = SpecializationWithCharge(
+                            specialization = name,
+                            charges = charges,
+                            subSpecializations = subSpecializations
+                        )
+                        
+                        specializationsList.add(specializationData)
+                        _selectedSpecializations.add(name)
+                        _chargesPerSpecialization[name] = charges
+                        _selectedSubSpecializations[name] = subSpecializations
+                    }
+                    
+                    _specializationState.value = specializationsList
+                }
+
+                // Update UI state with all loaded data
+                _uiState.value = _uiState.value.copy(
+                    specializationsWithCharges = _specializationState.value,
+                    selectedworkstyle = _selectedWorkstyle.value,
+                    selectedOptions = _selectedOptions.value,
+                    selectedTimeSlots = _selectedTimeSlots.value
+                )
+
+                Log.d("LOAD_DEBUG", "Complete data loading completed successfully")
+            } else {
+                Log.d("LOAD_DEBUG", "No complete data found for user")
+            }
+        } catch (e: Exception) {
+            Log.e("LOAD_DEBUG", "Error loading complete user data", e)
+            _uiState.value = _uiState.value.copy(errorMessage = "Failed to load user data")
         }
     }
 
@@ -498,7 +604,7 @@ class SPViewModel2(
                     Log.d("LOAD_DEBUG", "No workstyle data found")
                 }
 
-                // Load time slots and options
+                // Load time slots and options - SHOULD BE CONSISTENT NOW
                 val savedTimeSlots = savedMap["selectedTimeSlots"] as? Map<*, *>
                 if (savedTimeSlots != null) {
                     val timeSlots = savedTimeSlots.mapKeys { it.key as String }
@@ -640,6 +746,7 @@ class SPViewModel2(
         // THIS IS THE ONLY PLACE WHERE DATA IS SAVED TO FIREBASE
         viewModelScope.launch {
             Log.d("ServiceProviderViewModel", "🔥 SAVING TO FIREBASE - Submit button clicked")
+            Log.d("ServiceProviderViewModel", "Saving all specializations together in single document")
             firebaseRepository.saveServiceProviderData(
                 specializationsWithCharges = _specializationState.value,
                 selectedTimeSlots = _selectedTimeSlots.value,
@@ -653,7 +760,7 @@ class SPViewModel2(
                     isSubmittedSuccessfully.value = true
                     submissionSuccess.value = true
                     _uiState.value = _uiState.value.copy(errorMessage = null)
-                    Log.d("ServiceProviderViewModel", "✅ Successfully saved to Firebase")
+                    Log.d("ServiceProviderViewModel", "✅ Successfully saved all data to Firebase in single document")
                 } else {
                     errorMessage.value = message ?: "Failed to save data."
                     _uiState.value = _uiState.value.copy(errorMessage = message)
