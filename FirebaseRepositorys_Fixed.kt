@@ -1,0 +1,326 @@
+import android.content.Context
+import android.net.Uri
+import android.util.Log
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
+import com.google.firebase.storage.FirebaseStorage
+import kotlinx.coroutines.tasks.await
+
+class FirebaseRepositorys {
+
+    private val firestore = FirebaseFirestore.getInstance()
+    private val storage = FirebaseStorage.getInstance()
+    private val auth = FirebaseAuth.getInstance()
+
+    private suspend fun ensureAuthenticated(): Boolean {
+        return try {
+            if (auth.currentUser == null) {
+                Log.d("FirebaseRepository", "No authenticated user, signing in anonymously...")
+                auth.signInAnonymously().await()
+                Log.d("FirebaseRepository", "Anonymous sign-in successful")
+            }
+
+            val currentUser = auth.currentUser
+            if (currentUser != null) {
+                Log.d("FirebaseRepository", "User authenticated: ${currentUser.uid}")
+                return true
+            } else {
+                Log.e("FirebaseRepository", "Authentication failed - no user")
+                return false
+            }
+        } catch (e: Exception) {
+            Log.e("FirebaseRepository", "Failed to authenticate user", e)
+            // Try without authentication for development
+            Log.w("FirebaseRepository", "Proceeding without authentication for development mode")
+            return true
+        }
+    }
+
+    private suspend fun uploadImageToStorage(
+        imageUri: Uri,
+        path: String,
+        context: Context
+    ): String? {
+        return try {
+            Log.d("FirebaseRepository", "Starting image upload to path: $path")
+
+            val storageRef = storage.reference.child(path)
+
+            // Convert URI to byte array for upload
+            val inputStream = context.contentResolver.openInputStream(imageUri)
+            val bytes = inputStream?.readBytes()
+            inputStream?.close()
+
+            if (bytes != null) {
+                Log.d("FirebaseRepository", "Image size: ${bytes.size} bytes")
+
+                // Upload the image
+                val uploadTask = storageRef.putBytes(bytes).await()
+                Log.d("FirebaseRepository", "Upload successful, getting download URL...")
+
+                // Get download URL
+                val downloadUrl = storageRef.downloadUrl.await()
+                Log.d("FirebaseRepository", "Image uploaded successfully: $downloadUrl")
+                downloadUrl.toString()
+            } else {
+                Log.e("FirebaseRepository", "Failed to read image bytes")
+                null
+            }
+        } catch (e: Exception) {
+            Log.e("FirebaseRepository", "Error uploading image to storage: ${e.message}", e)
+            null
+        }
+    }
+
+    suspend fun saveServiceProviderData(
+        specializationsWithCharges: List<com.example.clanhub.serviProviderRegisScrn2.screen.fields.SpecializationWithCharge>,
+        selectedTimeSlots: Map<String, List<String>>,
+        selectedworkstyle: List<String>,
+        selectedOptions: List<String>,
+        experience: String,
+        context: Context,
+        onComplete: (Boolean, String?) -> Unit,
+    ) {
+        try {
+            // 🟢 Get current user's phone number - handle null case properly
+            val user = FirebaseAuth.getInstance().currentUser
+            val phone = user?.phoneNumber?.replace("+91", "") ?: run {
+                onComplete(false, "User not authenticated or phone number not available")
+                return
+            }
+
+            Log.d("FirebaseRepository", "Saving data for phone number: $phone")
+
+            val documentRef = firestore.collection("service_providers").document(phone)
+
+            // 🟢 Prepare specializations data as a single consolidated structure
+            val specializationsData = specializationsWithCharges.map { specialization ->
+                val chargesMap = specialization.charges?.toMap() ?: emptyMap()
+                
+                mapOf(
+                    "specialization" to specialization.specialization,
+                    "charges" to chargesMap,
+                    "subSpecializations" to specialization.subSpecializations,
+                    "updatedAt" to com.google.firebase.Timestamp.now()
+                )
+            }
+
+            // 🟢 Filter selected time slots
+            val filteredTimeSlots = selectedTimeSlots.filterKeys { key ->
+                selectedOptions.contains(key) && !selectedTimeSlots[key].isNullOrEmpty()
+            }
+
+            // 🟢 Construct final Firestore data - SINGLE DOCUMENT STRUCTURE
+            val serviceProviderData = hashMapOf(
+                "specializationsWithCharges" to specializationsData, // Array of all specializations
+                "selectedTimeSlots" to filteredTimeSlots,
+                "selectedWorkStyle" to selectedworkstyle.filter { it.isNotBlank() },
+                "selectedOptions" to selectedOptions.filter { it.isNotBlank() },
+                "updatedAt" to com.google.firebase.Timestamp.now(),
+                "userId" to (auth.currentUser?.uid ?: "anonymous_user"),
+                "experience" to (experience.ifBlank { "0" }),
+            )
+
+            // Use set with merge to update the entire document
+            documentRef.set(serviceProviderData, SetOptions.merge()).await()
+
+            Log.d("FirebaseRepository", "Successfully saved service provider data with phone: $phone")
+            Log.d("FirebaseRepository", "Saved ${specializationsData.size} specializations together")
+            onComplete(true, null)
+
+        } catch (e: Exception) {
+            Log.e("FirebaseRepository", "Error saving service provider data", e)
+
+            val errorMessage = when {
+                e.message?.contains("PERMISSION_DENIED") == true ->
+                    "Permission denied. Please check Firebase security rules."
+                e.message?.contains("UNAUTHENTICATED") == true ->
+                    "Authentication failed. Please try again."
+                e.message?.contains("network") == true || e.message?.contains("UNAVAILABLE") == true ->
+                    "Network error. Please check your internet connection."
+                e.message?.contains("administrators only") == true ->
+                    "Configuration issue. Please contact support."
+                else -> "Failed to save data. Please try again."
+            }
+
+            onComplete(false, errorMessage)
+        }
+    }
+
+    suspend fun getServiceForUser(serviceName: String): Map<String, Any>? {
+        val user = FirebaseAuth.getInstance().currentUser
+        val phone = user?.phoneNumber?.replace("+91", "") ?: return null
+
+        val docRef = firestore.collection("service_providers").document(phone)
+        val snapshot = docRef.get().await()
+
+        if (snapshot.exists()) {
+            val data = snapshot.data ?: return null
+
+            // Get the specializations array and find the specific one
+            val allSpecializations = data["specializationsWithCharges"] as? List<Map<String, Any>>
+            val specializationData = allSpecializations?.find { 
+                it["specialization"] == serviceName 
+            }
+
+            if (specializationData != null) {
+                // Return combined data: specialization + document-level fields
+                return mapOf(
+                    // Specialization-specific data
+                    "specialization" to (specializationData["specialization"] ?: serviceName),
+                    "charges" to (specializationData["charges"] ?: mapOf<String, String>()),
+                    "subSpecializations" to (specializationData["subSpecializations"] ?: emptyList<String>()),
+
+                    // Document-level data that applies to all services (CONSISTENT TIME SLOTS)
+                    "selectedWorkStyle" to (data["selectedWorkStyle"] ?: emptyList<String>()),
+                    "selectedTimeSlots" to (data["selectedTimeSlots"] ?: mapOf<String, List<String>>()),
+                    "selectedOptions" to (data["selectedOptions"] ?: emptyList<String>()),
+                    "experience" to (data["experience"] ?: "")
+                )
+            }
+        }
+
+        return null
+    }
+
+    // Method to get all specializations for a user
+    suspend fun getAllSpecializationsForUser(): List<Map<String, Any>>? {
+        val user = FirebaseAuth.getInstance().currentUser
+        val phone = user?.phoneNumber?.replace("+91", "") ?: return null
+
+        val docRef = firestore.collection("service_providers").document(phone)
+        val snapshot = docRef.get().await()
+
+        if (snapshot.exists()) {
+            val data = snapshot.data ?: return null
+            
+            // Return the array of specializations
+            val specializations = data["specializationsWithCharges"] as? List<Map<String, Any>>
+            return specializations
+        }
+
+        return null
+    }
+
+    // Method to get complete user data (all specializations + common fields)
+    suspend fun getCompleteUserData(): Map<String, Any>? {
+        val user = FirebaseAuth.getInstance().currentUser
+        val phone = user?.phoneNumber?.replace("+91", "") ?: return null
+
+        val docRef = firestore.collection("service_providers").document(phone)
+        val snapshot = docRef.get().await()
+
+        if (snapshot.exists()) {
+            return snapshot.data
+        }
+
+        return null
+    }
+
+    // Method to delete a specific specialization (only used when needed)
+    suspend fun deleteSpecialization(serviceName: String): Boolean {
+        return try {
+            val user = FirebaseAuth.getInstance().currentUser
+            val phone = user?.phoneNumber?.replace("+91", "") ?: return false
+
+            val docRef = firestore.collection("service_providers").document(phone)
+            val snapshot = docRef.get().await()
+            
+            if (snapshot.exists()) {
+                val data = snapshot.data ?: return false
+                val allSpecializations = data["specializationsWithCharges"] as? List<Map<String, Any>> ?: return false
+                
+                // Filter out the specialization to delete
+                val updatedSpecializations = allSpecializations.filter { 
+                    it["specialization"] != serviceName 
+                }
+                
+                // Update the document with the filtered list
+                val updates = mapOf(
+                    "specializationsWithCharges" to updatedSpecializations,
+                    "updatedAt" to com.google.firebase.Timestamp.now()
+                )
+                
+                docRef.update(updates).await()
+                Log.d("FirebaseRepository", "Successfully deleted specialization: $serviceName")
+                true
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            Log.e("FirebaseRepository", "Error deleting specialization: $serviceName", e)
+            false
+        }
+    }
+
+    // Method to check if a specialization exists
+    suspend fun specializationExists(serviceName: String): Boolean {
+        return try {
+            val user = FirebaseAuth.getInstance().currentUser
+            val phone = user?.phoneNumber?.replace("+91", "") ?: return false
+
+            val docRef = firestore.collection("service_providers").document(phone)
+            val snapshot = docRef.get().await()
+
+            if (snapshot.exists()) {
+                val data = snapshot.data ?: return false
+                val allSpecializations = data["specializationsWithCharges"] as? List<Map<String, Any>>
+                return allSpecializations?.any { it["specialization"] == serviceName } == true
+            }
+            false
+        } catch (e: Exception) {
+            Log.e("FirebaseRepository", "Error checking specialization existence: $serviceName", e)
+            false
+        }
+    }
+
+    // Method to get user's basic profile info (without specializations)
+    suspend fun getUserBasicInfo(): Map<String, Any>? {
+        val user = FirebaseAuth.getInstance().currentUser
+        val phone = user?.phoneNumber?.replace("+91", "") ?: return null
+
+        val docRef = firestore.collection("service_providers").document(phone)
+        val snapshot = docRef.get().await()
+
+        if (snapshot.exists()) {
+            val data = snapshot.data ?: return null
+            return mapOf(
+                "selectedWorkStyle" to (data["selectedWorkStyle"] ?: emptyList<String>()),
+                "selectedTimeSlots" to (data["selectedTimeSlots"] ?: mapOf<String, List<String>>()),
+                "selectedOptions" to (data["selectedOptions"] ?: emptyList<String>()),
+                "experience" to (data["experience"] ?: ""),
+                "userId" to (data["userId"] ?: ""),
+                "updatedAt" to (data["updatedAt"] ?: "")
+            )
+        }
+
+        return null
+    }
+
+    // Helper function to convert Charges to Map (if not already available)
+    private fun chargesToMap(charges: com.example.clanhub.serviProviderRegisScrn2.screen.fields.Charges?): Map<String, String> {
+        return charges?.let {
+            mapOf(
+                "perHour" to it.perHour,
+                "perDay" to it.perDay,
+                "perWeek" to it.perWeek,
+                "perMonth" to it.perMonth
+            )
+        } ?: emptyMap()
+    }
+
+    // Helper function to get file extension (if needed for future use)
+    private fun getFileExtension(uri: Uri, context: Context): String? {
+        val contentResolver = context.contentResolver
+        val mimeType = contentResolver.getType(uri)
+        return when (mimeType) {
+            "image/jpeg" -> "jpg"
+            "image/png" -> "png"
+            "image/gif" -> "gif"
+            "image/webp" -> "webp"
+            else -> null
+        }
+    }
+}
