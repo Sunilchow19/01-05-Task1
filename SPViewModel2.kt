@@ -92,6 +92,13 @@ class SPViewModel2(
     val submissionSuccess = mutableStateOf(false)
     val errorMessage = mutableStateOf<String?>(null)
 
+    // Add these new state values for delete functionality
+    private val _deleteSuccess = MutableStateFlow(false)
+    val deleteSuccess: StateFlow<Boolean> = _deleteSuccess.asStateFlow()
+    
+    private val _deleteInProgress = MutableStateFlow(false)
+    val deleteInProgress: StateFlow<Boolean> = _deleteInProgress.asStateFlow()
+
     private val _selectedOptions = MutableStateFlow<List<String>>(emptyList())
     val selectedOptions: StateFlow<List<String>> get() = _selectedOptions
 
@@ -743,6 +750,60 @@ class SPViewModel2(
 
     fun setSubmissionSuccess(success: Boolean) {
         submissionSuccess.value = success
+    }
+
+    // ===== DELETE SERVICE FUNCTIONALITY =====
+
+    /**
+     * Delete a service/specialization from Firebase
+     */
+    fun deleteService(serviceName: String) {
+        viewModelScope.launch {
+            try {
+                _deleteInProgress.value = true
+                _uiState.value = _uiState.value.copy(errorMessage = null)
+                
+                Log.d("SPViewModel2", "Attempting to delete service: $serviceName")
+                
+                // Call the deleteSpecialization method from FirebaseRepository
+                val deleteResult = firebaseRepository.deleteSpecialization(serviceName)
+                
+                if (deleteResult) {
+                    _deleteSuccess.value = true
+                    submissionSuccess.value = true // Also set this for consistency with existing flow
+                    
+                    // Remove from local state as well
+                    _selectedSpecializations.remove(serviceName)
+                    _chargesPerSpecialization.remove(serviceName)
+                    _experiencePerSpecialization.remove(serviceName)
+                    _selectedSubSpecializations.remove(serviceName)
+                    updateSpecializationState()
+                    
+                    Log.d("SPViewModel2", "Successfully deleted service: $serviceName")
+                } else {
+                    val errorMsg = "Failed to delete service. Please try again."
+                    errorMessage.value = errorMsg
+                    _uiState.value = _uiState.value.copy(errorMessage = errorMsg)
+                    Log.e("SPViewModel2", "Delete operation returned false for service: $serviceName")
+                }
+                
+            } catch (e: Exception) {
+                val errorMsg = "Failed to delete service: ${e.message}"
+                errorMessage.value = errorMsg
+                _uiState.value = _uiState.value.copy(errorMessage = errorMsg)
+                Log.e("SPViewModel2", "Exception while deleting service: $serviceName", e)
+            } finally {
+                _deleteInProgress.value = false
+            }
+        }
+    }
+    
+    /**
+     * Reset delete-related states
+     */
+    fun resetDeleteState() {
+        _deleteSuccess.value = false
+        _deleteInProgress.value = false
     }
 
     // ===== UTILITY FUNCTIONS =====
