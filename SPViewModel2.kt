@@ -320,32 +320,62 @@ class SPViewModel2(
         for (specialization in specializationsWithCharges) {
             val charges = specialization.charges
             if (charges != null) {
-                val isFilled = charges.perHour.isNotEmpty() ||
-                        charges.perDay.isNotEmpty() ||
-                        charges.perWeek.isNotEmpty() ||
-                        charges.perMonth.isNotEmpty()
-
-                if (!isFilled) {
-                    _chargesValidationError.value = "At least one service charge must be entered for each specialization."
+                // Get selected workstyles for validation
+                val selectedWorkstyles = _selectedWorkstyle.value
+                
+                // Check that charges are filled for all selected workstyles
+                val chargeValidations = mapOf(
+                    "Hour" to charges.perHour,
+                    "Day" to charges.perDay,
+                    "Week" to charges.perWeek,
+                    "Month" to charges.perMonth
+                )
+                
+                // Validate that all selected workstyles have corresponding charges
+                for (workstyle in selectedWorkstyles) {
+                    val chargeValue = chargeValidations[workstyle] ?: ""
+                    
+                    if (chargeValue.isEmpty()) {
+                        _chargesValidationError.value = "Please enter charges for all selected work styles."
+                        return false
+                    }
+                    
+                    val chargeAmount = chargeValue.toIntOrNull() ?: 0
+                    
+                    when (workstyle) {
+                        "Hour" -> {
+                            if (chargeAmount < 100) {
+                                _chargesValidationError.value = "Minimum charge for Per Hour is ₹100"
+                                return false
+                            }
+                        }
+                        "Day" -> {
+                            if (chargeAmount < 100) {
+                                _chargesValidationError.value = "Minimum charge for Per Day is ₹100"
+                                return false
+                            }
+                        }
+                        "Week" -> {
+                            if (chargeAmount < 1000) {
+                                _chargesValidationError.value = "Minimum charge for Per Week is ₹1000"
+                                return false
+                            }
+                        }
+                        "Month" -> {
+                            if (chargeAmount < 1000) {
+                                _chargesValidationError.value = "Minimum charge for Per Month is ₹1000"
+                                return false
+                            }
+                        }
+                    }
+                }
+                
+                // Ensure at least one workstyle is selected
+                if (selectedWorkstyles.isEmpty()) {
+                    _chargesValidationError.value = "Please select at least one work style."
                     return false
                 }
 
-                if (charges.perHour.isNotEmpty() && (charges.perHour.toIntOrNull() ?: 0) < 100) {
-                    _chargesValidationError.value = "Minimum charge for Per Hour is ₹100"
-                    return false
-                }
-                if (charges.perDay.isNotEmpty() && (charges.perDay.toIntOrNull() ?: 0) < 100) {
-                    _chargesValidationError.value = "Minimum charge for Per Day is ₹100"
-                    return false
-                }
-                if (charges.perWeek.isNotEmpty() && (charges.perWeek.toIntOrNull() ?: 0) < 1000) {
-                    _chargesValidationError.value = "Minimum charge for Per Week is ₹1000"
-                    return false
-                }
-                if (charges.perMonth.isNotEmpty() && (charges.perMonth.toIntOrNull() ?: 0) < 1000) {
-                    _chargesValidationError.value = "Minimum charge for Per Month is ₹1000"
-                    return false
-                }
             } else {
                 _chargesValidationError.value = "Please enter charges for all specializations"
                 return false
